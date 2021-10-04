@@ -1,17 +1,26 @@
 import mysql.connector
-import pyzbar.pyzbar as pyzbar
+import pyzbar.pyzbar as pyzbar  # Module to read QR codes
 
-import qrcode  # pip python library for generating qr codes
+import qrcode  # Module for generating qr codes
 import smtplib  # Default Python library for emails
-import imghdr
+import imghdr  # Module to determine file type
 from email.message import EmailMessage
 
-import cv2
+import cv2  # computer vision
 
 from datetime import datetime
 
+from decouple import config  # Module to read environment variables
 
 SECONDS_IN_AN_HOUR = 3600
+
+# Get credentials from .env
+BOT_USER = config('BOT_USER')
+BOT_PASS = config('BOT_PASS')
+DB_HOST = config('DB_HOST')
+DB_USER = config('DB_USER')
+DB_PASS = config('DB_PASS')
+
 
 def main():
     running = True
@@ -49,7 +58,7 @@ def send_mail(image, nau_username):
 
     msg = EmailMessage()
     msg["Subject"] = "Welcome to ACM"
-    msg["From"] = "" # bot usr
+    msg["From"] = BOT_USER  # bot usr
     msg["To"] = send_to
     msg.set_content(message)
 
@@ -62,7 +71,7 @@ def send_mail(image, nau_username):
 
     with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:  # Identifies us with the mail server & Encrypt traffic
 
-        smtp.login("", "")  # Bot account login
+        smtp.login(BOT_USER, BOT_PASS)  # Bot account login
 
         smtp.send_message(msg)
 
@@ -92,6 +101,8 @@ def create_acc():
 
 def sign_in():
     cap = cv2.VideoCapture(0)
+    cap.set(3, 1920)  # Width
+    cap.set(4, 1080)  # Height
 
     nauid = ""
 
@@ -133,7 +144,7 @@ def sign_in():
 
     duration = now - last_sign_in_date
     duration_in_seconds = duration.total_seconds()
-    hours_since_last_sign_in = duration_in_seconds / SECONDS_IN_AN_HOUR # we only care about hours so drop the integer.
+    hours_since_last_sign_in = duration_in_seconds / SECONDS_IN_AN_HOUR  # we only care about hours so drop the integer.
 
     hours_since_last_sign_in = float(format(hours_since_last_sign_in, ".2"))
 
@@ -152,9 +163,9 @@ def sign_in():
 
 def connect_to_db():
     db = mysql.connector.connect(
-        host="acmmembers.mysql.database.azure.com",
-        user="",
-        passwd="",
+        host=DB_HOST,
+        user=DB_USER,
+        passwd=DB_PASS,
         database="nauacm",
     )
     return db

@@ -114,4 +114,4 @@ dmypy.json
 .pyre/
 
 # Generated jpg images
-.jpg
+*.jpg
