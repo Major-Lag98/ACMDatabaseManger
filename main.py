@@ -1,3 +1,6 @@
+import time
+import tkinter
+
 import mysql.connector
 import pyzbar.pyzbar as pyzbar  # Module to read QR codes
 
@@ -8,9 +11,15 @@ from email.message import EmailMessage
 
 import cv2  # computer vision
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from decouple import config  # Module to read environment variables
+
+from tkinter import *
+from PIL import Image, ImageTk
+
+WINDOW_WIDTH = 1500
+WINDOW_HEIGHT = 821
 
 SECONDS_IN_AN_HOUR = 3600
 
@@ -23,30 +32,118 @@ DB_PASS = config('DB_PASS')
 
 
 def main():
+    # Create window
+    window = Tk()
+    window.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+131+83")
+
+    # Create LabelFrame for label which holds captured frame.
+    frame = LabelFrame(window)
+    frame.pack()
+    frame.place(anchor=NW, y=100)  # Where we place the frame the label parented will follow
+    label = Label(frame)
+    label.pack()
+
+    # Capture video
+    cap = cv2.VideoCapture(0)
+    cap.set(3, 720)
+    cap.set(4, 720)
+
+    # Create instruction Label and put it at the top of screen
+    instructions_label = Label(window, text="Scan your QR code to sign in or create an account.", font=("Arial", 45))
+    instructions_label.pack()
+    instructions_label.place(anchor=N, x=WINDOW_WIDTH / 2)
+
+    # Create account label and entries
+    nau_id_label = Label(window, text="Nau ID", font=("Arial", 35))
+    nau_id_label.pack()
+    nau_id_label.place(anchor=N, x=WINDOW_WIDTH - 325, y=100)
+
+    nau_id = tkinter.StringVar(window)
+    enter_nauid = Entry(window, font=("Arial", 35), textvariable=nau_id)
+    enter_nauid.pack()
+    enter_nauid.place(anchor=NE, x=WINDOW_WIDTH - 50, y=170)
+
+    first_name_label = Label(window, text="First Name", font=("Arial", 35))
+    first_name_label.pack()
+    first_name_label.place(anchor=N, x=WINDOW_WIDTH - 325, y=235)
+
+    first_name = tkinter.StringVar(window)
+    enter_first_name = Entry(window, font=("Arial", 35), textvariable=first_name)
+    enter_first_name.pack()
+    enter_first_name.place(anchor=NE, x=WINDOW_WIDTH - 50, y=305)
+
+    # Create account button
+    btn_create_acc = Button(window, text='Create Account.',
+                            command=lambda: create_acc(enter_nauid.get(), enter_first_name.get()), font=("Arial", 35))
+    btn_create_acc.pack()
+    btn_create_acc.place(anchor=N, x=WINDOW_WIDTH - 325, y=400)
+
+    # Label for output, bottom of window
+    output_label = Label(window, text="Waiting for input.", font=("Arial Bold", 35),
+                         fg="#00c400")  # green
+    output_label.pack()
+    output_label.place(anchor=S, x=WINDOW_WIDTH / 2, y=WINDOW_HEIGHT - 90)
+
     running = True
 
     while running:
+        nau_id = ""
+        db = connect_to_db()
 
-        print("What would you like to do? Type (1 or 2)")
-        choice = int(input("(1: Create account, 2: Sign in) "))
+        data_received = False
 
-        if choice == 1:
-            create_acc()
+        while not data_received:
+
+            img = cap.read()[1]
+
+            decoded_objects = pyzbar.decode(img)
+
+            for obj in decoded_objects:
+                obj_data_bytes = obj.data  # Data in bytes
+                data = obj_data_bytes.decode('utf-8')
+                nau_id += data
+                data_received = True
+
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = ImageTk.PhotoImage(Image.fromarray(img))
+            label['image'] = img
+            window.update()
+
+        my_curser = db.cursor()
+
+        # get date from last sign in
+        # if the date is < 20 hours ago, don't allow sign in
+
+        my_curser.execute(f"SELECT last_sign_in_date FROM acmmembers where username = '{nau_id}'")
+
+        result = my_curser.fetchone()
+
+        last_sign_in_date = ""
+
+        for row in result:
+            last_sign_in_date = row
+
+        now = datetime.now()
+
+        duration = now - last_sign_in_date
+        duration_in_seconds = duration.total_seconds()
+        hours_since_last_sign_in = duration_in_seconds / SECONDS_IN_AN_HOUR
+
+        hours_since_last_sign_in = float(format(hours_since_last_sign_in, ".2"))
+
+        if hours_since_last_sign_in > 20:
+            update_statement = "UPDATE acmmembers SET tickets = tickets + 1, last_sign_in_date = %s WHERE username = %s"
+            statement_data = (now, nau_id)
+
+            my_curser.execute(update_statement, statement_data)
+            db.commit()
+
+            print("Signed in, Earned 1 point for today.")
         else:
-            sign_in()
-
-        running = should_continue()
-
-
-def should_continue():
-    answer = " "
-    while answer[0].lower() != 'y' and answer[0].lower() != 'n':
-        answer = input("Continue running? Enter (y/n): ")
-
-    if answer.lower() == 'y':
-        return True
-    else:
-        return False
+            print("you have signed in too recently.")
+            print(f"Last sign in was {hours_since_last_sign_in} hours ago.")
+        time.sleep(3)
+        cap.release()
 
 
 def send_mail(image, nau_username):
@@ -78,13 +175,10 @@ def send_mail(image, nau_username):
         print(f"Email sent to {send_to}")
 
 
-def create_acc():
-    nau_username = input("Enter our NAU username (ex: aaa123): ")
-    first_name = input("Please enter your first name: ")
+def create_acc(nau_id, first_name):
+    qr_file_name = f"{nau_id}.jpg"
 
-    qr_file_name = f"{nau_username}.jpg"
-
-    img = qrcode.make(str(nau_username))  # create out qr code
+    img = qrcode.make(str(nau_id))  # create out qr code
     img.save(qr_file_name)  # Save it with its name
 
     db = connect_to_db()
@@ -92,73 +186,11 @@ def create_acc():
     my_cursor = db.cursor()
 
     insert_statement = "INSERT INTO AcmMembers (Username, first_name, tickets, last_sign_in_date) VALUES (%s, %s, %s, %s)"
-    data = (nau_username, first_name, 1, datetime.now())  # Grant 1 ticket for attending initial meeting
+    data = (nau_id, first_name, 1, datetime.now())  # Grant 1 ticket for attending initial meeting
 
     my_cursor.execute(insert_statement, data)  # Use this to execute queries
     db.commit()
-    send_mail(qr_file_name, nau_username)
-
-
-def sign_in():
-    cap = cv2.VideoCapture(0)
-    cap.set(3, 1920)  # Width
-    cap.set(4, 1080)  # Height
-
-    nauid = ""
-
-    db = connect_to_db()
-
-    data_received = False
-
-    while not data_received:  # make while data not received
-        _, frame = cap.read()
-
-        decoded_objects = pyzbar.decode(frame)
-
-        for obj in decoded_objects:
-            b = obj.data  # data in type bytes
-            data = b.decode('utf-8')  # data now a string
-            nauid += data
-            data_received = True
-
-        cv2.imshow("Frame", frame)
-
-        key = cv2.waitKey(1)
-        if key == 27:
-            break
-    my_cursor = db.cursor()
-
-    # get date from last sign in
-    # if the date > 20.0 from now allow sign in, else say you cant and leave
-
-    my_cursor.execute(f"Select last_sign_in_date FROM acmmembers where username = '{nauid}'")
-
-    result = my_cursor.fetchone()
-
-    last_sign_in_date = ""
-
-    for row in result:
-        last_sign_in_date = row
-
-    now = datetime.now()
-
-    duration = now - last_sign_in_date
-    duration_in_seconds = duration.total_seconds()
-    hours_since_last_sign_in = duration_in_seconds / SECONDS_IN_AN_HOUR  # we only care about hours so drop the integer.
-
-    hours_since_last_sign_in = float(format(hours_since_last_sign_in, ".2"))
-
-    if hours_since_last_sign_in > 20.0:
-        update_statement = "UPDATE acmmembers SET tickets = tickets + 1, last_sign_in_date = %s WHERE username = %s"
-        statement_data = (now, nauid)
-
-        my_cursor.execute(update_statement, statement_data)
-        db.commit()
-
-        print("Signed in, Earned 1 point for attending today!")
-    else:
-        print("You have signed in too recently.")
-        print(f"Last sign in was {hours_since_last_sign_in} hours ago.")
+    send_mail(qr_file_name, nau_id)
 
 
 def connect_to_db():
